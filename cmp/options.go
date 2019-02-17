@@ -195,7 +195,7 @@ type ignore struct{ core }
 
 func (ignore) isFiltered() bool                                                     { return false }
 func (ignore) filter(_ *state, _, _ reflect.Value, _ reflect.Type) applicableOption { return ignore{} }
-func (ignore) apply(_ *state, _, _ reflect.Value)                                   { return }
+func (ignore) apply(s *state, _, _ reflect.Value)                                   { s.reportIgnore() }
 func (ignore) String() string                                                       { return "Ignore()" }
 
 // invalid is a sentinel Option type to indicate that some options could not
@@ -270,12 +270,15 @@ func (tr *transformer) filter(s *state, _, _ reflect.Value, t reflect.Type) appl
 func (tr *transformer) apply(s *state, vx, vy reflect.Value) {
 	// Update path before calling the Transformer so that dynamic checks
 	// will use the updated path.
-	s.curPath.push(&transform{pathStep{tr.fnc.Type().Out(0)}, tr})
-	defer s.curPath.pop()
+	step := &transform{pathStep{tr.fnc.Type().Out(0)}, tr}
+	s.curPath.push(step)
+	vvx := s.callTRFunc(tr.fnc, vx)
+	vvy := s.callTRFunc(tr.fnc, vy)
+	s.curPath.pop()
 
-	vx = s.callTRFunc(tr.fnc, vx)
-	vy = s.callTRFunc(tr.fnc, vy)
-	s.compareAny(vx, vy)
+	s.pushStep(step, vvx, vvy)
+	s.compareAny(vvx, vvy)
+	s.popStep()
 }
 
 func (tr transformer) String() string {
@@ -323,7 +326,7 @@ func (cm *comparer) filter(_ *state, _, _ reflect.Value, t reflect.Type) applica
 
 func (cm *comparer) apply(s *state, vx, vy reflect.Value) {
 	eq := s.callTTBFunc(cm.fnc, vx, vy)
-	s.report(eq, vx, vy)
+	s.report(eq)
 }
 
 func (cm comparer) String() string {
@@ -375,25 +378,6 @@ type visibleStructs map[reflect.Type]bool
 
 func (visibleStructs) filter(_ *state, _, _ reflect.Value, _ reflect.Type) applicableOption {
 	panic("not implemented")
-}
-
-// reporter is an Option that configures how differences are reported.
-type reporter interface {
-	// TODO: Not exported yet.
-	//
-	// Perhaps add PushStep and PopStep and change Report to only accept
-	// a PathStep instead of the full-path? Adding a PushStep and PopStep makes
-	// it clear that we are traversing the value tree in a depth-first-search
-	// manner, which has an effect on how values are printed.
-
-	Option
-
-	// Report is called for every comparison made and will be provided with
-	// the two values being compared, the equality result, and the
-	// current path in the value tree. It is possible for x or y to be an
-	// invalid reflect.Value if one of the values is non-existent;
-	// which is possible with maps and slices.
-	Report(x, y reflect.Value, eq bool, p Path)
 }
 
 // normalizeOption normalizes the input options such that all Options groups
